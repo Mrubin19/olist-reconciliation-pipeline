@@ -1,105 +1,63 @@
-# Automated Reconciliation & Reporting Pipeline
+# Olist Reconciliation Pipeline
 
-![Excel](https://img.shields.io/badge/Excel-217346?style=flat&logo=microsoftexcel&logoColor=white) ![Power Query](https://img.shields.io/badge/Power_Query-742774?style=flat&logo=microsoftpowerbi&logoColor=white) ![VBA](https://img.shields.io/badge/VBA-1F3864?style=flat&logo=microsoft&logoColor=white)
+A small project I built to learn Power Query, VBA, and Power BI on real data — the Olist Brazilian e-commerce dataset from Kaggle (about 100k transactions from 2016-2018).
 
-An Excel-based ETL pipeline that reconciles transaction data between two source systems, classifies discrepancies, and produces an auditable summary dashboard. Built using Power Query for data transformation and VBA for one-click automation.
-
-Tested on the **Olist Brazilian E-Commerce** dataset — 99,441 real transactions from 2016 to 2018 modeling a sales-vs-payments reconciliation scenario.
+The idea: take two sources of transaction data (orders and payments) and find where they don't match. This is the kind of work a finance analyst does manually every month — pulling exports, running VLOOKUPs, chasing discrepancies. I wanted to see how far I could automate it.
 
 ![Dashboard](screenshots/dashboard.png)
 
-## The Problem
+## What it does
 
-In any organization with separate sales and payment systems, transaction data must be reconciled periodically — typically a multi-day manual process involving CSV exports, VLOOKUPs, and spot-checking. This project automates the entire workflow into a one-click refresh.
+The pipeline reads three CSV files from Olist, joins them on order_id, and flags every transaction as one of:
 
-## Architecture
+- **Matched** — payment equals expected value (within 1 cent tolerance)
+- **Overpayment** — customer paid more than the order value
+- **Underpayment** — customer paid less
+- **Missing in Sales** — payment exists but no order record
+- **Missing in Payments** — order exists but no payment record
 
-The pipeline consists of three layers:
+Out of 99,441 transactions, 98.8% match cleanly. The other 1,156 get flagged and grouped by type.
 
-**1. Data Ingestion (Power Query)**
-- Loads source CSV files as separate queries (`qry_Orders`, `qry_Items`, `qry_Payments`)
-- Sets data types and standardizes keys
-- Aggregates payments per order_id (Group By + Sum) to collapse installment plans into single records
+## What I learned building this
 
-**2. Reconciliation Logic (Power Query)**
-- Left Outer Join across sources on order_id
-- Custom column logic classifies each transaction:
-  - `Matched` — values agree within 0.01 tolerance
-  - `Overpayment` — payment exceeds sale value
-  - `Underpayment` — payment below sale value
-  - `Missing in Sales` — payment exists, no order record
-  - `Missing in Payments` — order exists, no payment record
+The 0.01 tolerance threshold matters more than I expected. Without it, thousands of rows get flagged as discrepancies because of floating-point rounding errors — I was seeing values like `1.42e-14` showing up as "variance". Spent a while confused why my matched count was off before figuring this out.
 
-**3. Reporting & Automation (Excel + VBA)**
-- KPI dashboard with pivot tables and 100% stacked bar chart
-- Conditional formatting on Recon_Status for visual exception scanning
-- One-click VBA macro refreshes all queries, pivots, and audit log
-- Audit_Log sheet captures every execution with timestamp, user, and record count
+The other tricky bit was payments having multiple rows per order. If a customer pays in 10 installments, that's 10 rows in the payments file. First attempt I just merged the tables and got totals 5x too high. Took me a moment to realize I had to aggregate first, then merge.
 
-## Visual Output Examples
+The 3:1 ratio of overpayments to underpayments was an interesting finding — most likely caused by installment fees (Brazilian "parcelado" payments add interest), not actual data errors. That's the kind of thing I'd dig into more if this were a real job.
 
-The conditional formatting layer makes exception scanning instant. The two views below show the same data filtered differently — left shows clean matched transactions (the 98.8% majority), right shows only flagged anomalies requiring review.
+## The Excel version
 
-| Matched Transactions (clean data) | Filtered Exceptions (anomalies) |
-|---|---|
-| ![Matched](screenshots/reconciled-output-matched.png) | ![Exceptions](screenshots/reconciled-output-exceptions.png) |
+Dashboard with KPI cards, a monthly trend chart, and conditional formatting on the exceptions sheet so you can scan and spot anomalies fast. There's a "Refresh" button wired to a VBA macro — it re-pulls the CSVs, recalculates everything, refreshes the pivots, and logs the run with timestamp and username. Basically what I'd want if I had to do this every month at work.
 
-## Key Findings
+![Exceptions view](screenshots/reconciled-output-exceptions.png)
 
-| Metric | Value |
-|---|---|
-| Total transactions reconciled | 99,441 |
-| Match rate | 98.8% |
-| Total exceptions flagged | 1,156 |
-| Largest discrepancy category | Missing in Sales (775 records, R$ 162,591) |
-| Overpayment-to-underpayment ratio | 3:1 |
-| Net variance | R$ 2,870.39 |
+## The Power BI version
 
-The 3:1 overpayment ratio strongly suggests installment processing fees as the root cause rather than data quality issues — a hypothesis testable by drilling down on `payment_installments_max`.
+I rebuilt the same dashboard in Power BI to compare the two tools. The Power Query M code from Excel pastes into Power BI 1:1, which was nice to discover — same engine, different host application.
 
-## Technical Highlights
+What Power BI adds: clicking any status in the slicer filters the whole report instantly. In Excel I had to manually filter pivot tables. Also wrote a few DAX measures for the KPI cards (Match Rate, Net Variance, Exceptions count).
 
-- **Floating-point-safe matching:** uses `Number.Abs(variance) < 0.01` instead of strict equality to ignore binary arithmetic artifacts (values like `1.42e-14` would otherwise be flagged as discrepancies)
-- **Aggregate-before-merge pattern:** prevents row multiplication when one order has multiple payment rows due to installment plans
-- **Async-aware refresh:** VBA macro waits for Power Query to complete before triggering downstream pivot updates
-- **Self-documenting audit trail:** every execution writes timestamped row to Audit_Log with Windows username and processed record count
+![Power BI Dashboard](screenshots/dashboard_powerbi.png)
 
-![Power Query Pipeline](screenshots/power-query-editor.png)
+## Files
 
-## How to Run
-
-### 📥 Download the workbook
+- `powerbi/olist_reconciliation_powerbi_dashboard.pbix` — Power BI version
+- `vba/OneClickRefresh.bas` — the refresh macro, readable here without downloading
+- `screenshots/` — what the dashboards look like
 
 The Excel workbook (32 MB) is hosted on Google Drive due to GitHub's 25 MB file size limit:
 
-**[Download Olist_Reconciliation.xlsm](https://drive.google.com/file/d/1BwbHfl3FxCPSanE6N5IN78XdWWK1VB4H/view?usp=sharing)**
+**[📥 Download Olist_Reconciliation.xlsm](https://drive.google.com/file/d/1BwbHfl3FxCPSanE6N5IN78XdWWK1VB4H/view?usp=sharing)**
 
-### Setup steps
+## How to run it yourself
 
-1. Download the dataset from [Kaggle — Olist Brazilian E-Commerce](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
-2. Place the required CSV files in the same folder as `Olist_Reconciliation.xlsm`:
-   - `olist_orders_dataset.csv`
-   - `olist_order_items_dataset.csv`
-   - `olist_order_payments_dataset.csv`
-3. Open the workbook and enable macros (you'll see a yellow warning bar — click "Enable Content")
-4. Click **Refresh Dashboard** on the Dashboard sheet
+1. Get the Olist dataset from [Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
+2. Put the three CSVs (orders, order_items, order_payments) in the same folder as the Excel file
+3. Open the workbook, enable macros, click **Refresh Dashboard**
 
-⚠️ **Note:** You must have Microsoft Excel 2016 or newer with Power Query support. Excel Online and macOS versions may have limited functionality.
+For the Power BI version, just open the .pbix file — you'll need to point Power Query to your local CSV paths the first time.
 
-## Repository Structure
+## Tools
 
-```
-olist-reconciliation-pipeline/
-├── README.md                  ← project overview (this file)
-├── vba/
-│   └── OneClickRefresh.bas         ← exported VBA module (readable on GitHub)
-└── screenshots/
-    ├── dashboard.png                       ← KPI dashboard overview
-    ├── reconciled-output-matched.png       ← normal matched transactions view
-    ├── reconciled-output-exceptions.png    ← filtered view of flagged anomalies
-    └── power-query-editor.png              ← Power Query transformation pipeline
-
-Workbook hosted externally on Google Drive (see Download section above).
-## Skills Demonstrated
-
-Excel · Power Query · M language · VBA · PivotTables · Conditional Formatting · ETL pipeline design · Data reconciliation · Audit & compliance design
+Excel, Power Query (M), VBA, Power BI, DAX
